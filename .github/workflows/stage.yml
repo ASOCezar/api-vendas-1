@@ -1,26 +1,133 @@
-name: Staging Deployment
+name: Dynamic Canary Deployment - DigitalOcean DOCR
 
 on:
   push:
-    branches: ['*']
+    branches: [main]
+
+env:
+  REGION: nyc3
+  SIZE: s-1vcpu-1gb
+  IMAGE: ubuntu-22-04-x64
+  IMAGE_NAME: registry.digitalocean.com/${{ secrets.DOCR_REGISTRY }}/app:${{ github.sha }}
+  HEALTHCHECK_URL: http://{{canary_ip}}/health
+  HEALTH_RETRIES: 10
+  HEALTH_DELAY: 10
 
 jobs:
-  deploy:
+  build:
+    name: Build and Push to DOCR
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install doctl
-      uses: digitalocean/action-doctl@v2
-      with:
-        token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - name: Login to DOCR
+        run: echo "${{ secrets.DOCR_ACCESS_TOKEN }}" | docker login registry.digitalocean.com -u doctl --password-stdin
 
-    - name: Build container image
-      run: docker build -t registry.digitalocean.com/asocezar-api-vendas-1/asocezar-api-vendas:$(echo $GITHUB_SHA | head -c7) .
+      - name: Build and Push Docker image
+        run: |
+          docker build -t $IMAGE_NAME .
+          docker push $IMAGE_NAME
 
-    - name: Log in to DigitalOcean Container Registry with short-lived credentials
-      run: doctl registry login --expiry-seconds 1200
+  canary-deploy:
+    name: Create and Deploy Canary
+    runs-on: ubuntu-latest
+    needs: build
+    outputs:
+      canary_ip: ${{ steps.get-ip.outputs.ip }}
 
-    - name: Provision Droplet and deploy container
-      run: doctl compute droplet create api-vendas-1 --image docker-18-04 --size s-1vcpu-1gb --region nyc1 --user-data-file deploy.sh --wait
+    steps:
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Create canary droplet
+        run: |
+          CANARY_NAME="canary-${{ github.run_id }}"
+          echo "🚀 Creating canary droplet $CANARY_NAME..."
+          doctl compute droplet create $CANARY_NAME \
+            --region $REGION \
+            --size $SIZE \
+            --image $IMAGE \
+            --ssh-keys ${{ secrets.DO_SSH_FINGERPRINT }} \
+            --tag-names canary \
+            --wait
+      - name: Get Canary IP
+        id: get-ip
+        run: |
+          IP=$(doctl compute droplet list --tag-name canary --format PublicIPv4 --no-header | head -n 1)
+          echo "Canary IP: $IP"
+          echo "ip=$IP" >> $GITHUB_OUTPUT
+
+      - name: Deploy Docker image to canary
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ steps.get-ip.outputs.ip }}
+          username: root
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            apt update -y && apt install -y docker.io
+            docker login registry.digitalocean.com -u doctl -p "${{ secrets.DOCR_ACCESS_TOKEN }}"
+            docker pull $IMAGE_NAME
+            docker run -d --name app -p 80:80 $IMAGE_NAME
+            echo "✅ Canary deployed on $HOSTNAME"
+
+  healthcheck:
+    name: Health Check Canary
+    runs-on: ubuntu-latest
+    needs: canary-deploy
+    steps:
+      - name: Test Canary Health
+        run: |
+          IP=${{ needs.canary-deploy.outputs.canary_ip }}
+          echo "🔍 Checking health at http://$IP/health"
+          for i in $(seq 1 $HEALTH_RETRIES); do
+            if curl -fs http://$IP/health; then
+              echo "✅ Canary healthy after $i attempts"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying in $HEALTH_DELAY seconds..."
+            sleep $HEALTH_DELAY
+          done
+          echo "❌ Canary failed health check"
+          exit 1
+        env:
+          HEALTH_RETRIES: ${{ env.HEALTH_RETRIES }}
+          HEALTH_DELAY: ${{ env.HEALTH_DELAY }}
+
+  promote:
+    name: Promote to Production
+    runs-on: ubuntu-latest
+    needs: [canary-deploy, healthcheck]
+    if: success()
+    strategy:
+      matrix:
+        host: ${{ secrets.DROPLET_PROD_1_IP }}
+    steps:
+      - name: Deploy to production droplets
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ matrix.host }}
+          username: root
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            docker login registry.digitalocean.com -u doctl -p "${{ secrets.DOCR_ACCESS_TOKEN }}"
+            docker pull $IMAGE_NAME
+            docker stop app || true
+            docker rm app || true
+            docker run -d --name app -p 80:80 $IMAGE_NAME
+            echo "🚀 Production updated!"
+
+  cleanup:
+    name: Cleanup Canary
+    runs-on: ubuntu-latest
+    needs: [canary-deploy, healthcheck]
+    if: always()
+    steps:
+      - name: Delete canary droplet
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - run: |
+          echo "🧹 Removing canary droplet..."
+          doctl compute droplet delete --tag-name canary --force
