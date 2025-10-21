@@ -9,10 +9,8 @@ env:
   SIZE: s-1vcpu-1gb
   IMAGE: ubuntu-22-04-x64
   IMAGE_NAME: registry.digitalocean.com/${{ secrets.DOCR_REGISTRY }}/app:${{ github.sha }}
-  HEALTHCHECK_URL: http://{{canary_ip}}/health
   HEALTH_RETRIES: 10
   HEALTH_DELAY: 10
-  DROPLET_PROD_1_IP: ${{ secrets.DROPLET_PROD_1_IP }}
 
 jobs:
   build:
@@ -53,6 +51,7 @@ jobs:
             --ssh-keys ${{ secrets.DO_SSH_FINGERPRINT }} \
             --tag-names canary \
             --wait
+
       - name: Get Canary IP
         id: get-ip
         run: |
@@ -71,7 +70,7 @@ jobs:
             docker login registry.digitalocean.com -u doctl -p "${{ secrets.DOCR_ACCESS_TOKEN }}"
             docker pull $IMAGE_NAME
             docker run -d --name app -p 80:80 $IMAGE_NAME
-            echo "✅ Canary deployed on $HOSTNAME"
+            echo "✅ Canary deployed successfully"
 
   healthcheck:
     name: Health Check Canary
@@ -101,23 +100,21 @@ jobs:
     runs-on: ubuntu-latest
     needs: [canary-deploy, healthcheck]
     if: success()
-    strategy:
-      matrix:
-        host: ${{ env.DROPLET_PROD_1_IP }}
     steps:
-      - name: Deploy to production droplets
+      - name: Deploy to production droplet
         uses: appleboy/ssh-action@v1.2.0
         with:
-          host: ${{ matrix.host }}
+          host: ${{ secrets.DROPLET_PROD_1_IP }}
           username: root
           key: ${{ secrets.SSH_KEY }}
           script: |
+            echo "🚀 Promoting to production droplet..."
             docker login registry.digitalocean.com -u doctl -p "${{ secrets.DOCR_ACCESS_TOKEN }}"
             docker pull $IMAGE_NAME
             docker stop app || true
             docker rm app || true
             docker run -d --name app -p 80:80 $IMAGE_NAME
-            echo "🚀 Production updated!"
+            echo "✅ Production updated successfully"
 
   cleanup:
     name: Cleanup Canary
