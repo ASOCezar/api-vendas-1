@@ -116,16 +116,16 @@ jobs:
             docker run -d --name app -p 80:80 $IMAGE_NAME
             echo "✅ Production updated successfully"
 
-  cleanup:
-    name: Cleanup Canary
-    runs-on: ubuntu-latest
-    needs: [canary-deploy, healthcheck]
-    if: always()
-    steps:
-      - name: Delete canary droplet
-        uses: digitalocean/action-doctl@v2
-        with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-      - run: |
-          echo "🧹 Removing canary droplet..."
-          doctl compute droplet delete --tag-name canary --force
+  # cleanup:
+  #   name: Cleanup Canary
+  #   runs-on: ubuntu-latest
+  #   needs: [canary-deploy, healthcheck]
+  #   if: always()
+  #   steps:
+  #     - name: Delete canary droplet
+  #       uses: digitalocean/action-doctl@v2
+  #       with:
+  #         token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+  #     - run: |
+  #         echo "🧹 Removing canary droplet..."
+  #         doctl compute droplet delete --tag-name canary --force
