@@ -2,8 +2,7 @@ name: Staging Deployment
 
 on:
   push:
-    tags:
-      - stage-*
+    branches: ['*']
 
 jobs:
   deploy:
@@ -11,12 +10,6 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-    - name: Extract tag name
-      id: tag
-      run: echo "TAG_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-    - name: Image tag with date
-      id: date_tag
-      run: echo "DATE_TAG=${date + '%Y%m%d%H%M%S%Z'}" >> $GITHUB_OUTPUT
 
     - name: Install doctl
       uses: digitalocean/action-doctl@v2
@@ -41,4 +34,4 @@ jobs:
       run: kubectl apply -f $GITHUB_WORKSPACE/config/deployment.yml
 
     - name: Verify deployment
-      run: kubectl rollout status deployment/<deployment_name>
+      run: kubectl rollout status deployment/api-vendas-deployment
