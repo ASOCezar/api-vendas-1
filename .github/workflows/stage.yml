@@ -2,7 +2,7 @@ name: Dynamic Canary Deployment - DigitalOcean DOCR
 
 on:
   push:
-    branches: [main]
+    branches: [master]
 
 env:
   REGION: nyc3
