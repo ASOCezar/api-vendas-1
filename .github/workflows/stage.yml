@@ -12,6 +12,7 @@ env:
   HEALTHCHECK_URL: http://{{canary_ip}}/health
   HEALTH_RETRIES: 10
   HEALTH_DELAY: 10
+  DROPLET_PROD_1_IP: ${{ secrets.DROPLET_PROD_1_IP }}
 
 jobs:
   build:
@@ -102,7 +103,7 @@ jobs:
     if: success()
     strategy:
       matrix:
-        host: ${{ secrets.DROPLET_PROD_1_IP }}
+        host: ${{ env.DROPLET_PROD_1_IP }}
     steps:
       - name: Deploy to production droplets
         uses: appleboy/ssh-action@v1.2.0
