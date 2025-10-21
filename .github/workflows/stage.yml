@@ -69,7 +69,7 @@ jobs:
             apt update -y && apt install -y docker.io
             docker login registry.digitalocean.com -u doctl -p "${{ secrets.DOCR_ACCESS_TOKEN }}"
             docker pull $IMAGE_NAME
-            docker run -d --name app -p 80:80 $IMAGE_NAME
+            docker run -d --name app -p 3333:3333 $IMAGE_NAME
             echo "✅ Canary deployed successfully"
 
   healthcheck:
@@ -113,7 +113,7 @@ jobs:
             docker pull $IMAGE_NAME
             docker stop app || true
             docker rm app || true
-            docker run -d --name app -p 80:80 $IMAGE_NAME
+            docker run -d --name app -p 3333:3333 $IMAGE_NAME
             echo "✅ Production updated successfully"
 
   # cleanup:
